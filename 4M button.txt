@@ -1,0 +1,175 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+// WiFi Credentials
+const char* ssid = "Touchstone";
+const char* password = "secure@123";
+
+// MQTT Broker
+const char* mqtt_server = "3.7.85.13";  
+const int mqtt_port = 1883;
+const char* mqtt_topic = "JBMGroup/machineEvents";  // Updated MQTT Topic
+
+// Button & LED Configuration
+#define BUTTON1 21  // DT1
+#define BUTTON2 22  // DT2
+#define BUTTON3 23  // DT3
+#define BUTTON4 25  // DT4
+#define LED_PIN 2   // LED Indicator
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 3600); // UTC Time
+
+bool lastButtonState[4] = {HIGH, HIGH, HIGH, HIGH};  // Store last button states
+bool buttonPressed = false;
+unsigned long lastPressTime = 0;
+const int debounceDelay = 50;  // Debounce time in milliseconds
+const int sendDelay = 2000;    // 2-second delay before sending data
+const int blinkTime = 500;     // LED blink duration (500ms)
+String currentEvent = "";      // Store event code
+
+void callback(char* topic, byte* message, unsigned int length) {
+    Serial.print("Message received on topic: ");
+    Serial.println(topic);
+    Serial.print("Message: ");
+    for (int i = 0; i < length; i++) {
+        Serial.print((char)message[i]);
+    }
+    Serial.println();
+}
+
+// Reconnect to MQTT broker
+void reconnect() {
+    while (!client.connected()) {
+        Serial.print("Connecting to MQTT broker... ");
+        if (client.connect("ESP32Client")) {
+            Serial.println("Connected!");
+            client.subscribe(mqtt_topic);
+        } else {
+            Serial.print("Failed, rc=");
+            Serial.print(client.state());
+            Serial.println(". Retrying in 5 seconds...");
+            delay(5000);
+        }
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(BUTTON1, INPUT_PULLUP);
+    pinMode(BUTTON2, INPUT_PULLUP);
+    pinMode(BUTTON3, INPUT_PULLUP);
+    pinMode(BUTTON4, INPUT_PULLUP);
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);  
+
+    // Connect to WiFi
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting to WiFi...");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println(" Connected to WiFi!");
+
+    // Start NTP client
+    timeClient.begin();
+    timeClient.update();
+
+    // Connect to MQTT broker
+    client.setServer(mqtt_server, mqtt_port);
+    client.setCallback(callback);
+}
+
+// Function to get current timestamp in ISO 8601 format
+String getISO8601Time() {
+    timeClient.update();
+    unsigned long epochTime = timeClient.getEpochTime();
+    
+    struct tm *ptm = gmtime((time_t *)&epochTime);
+    char isoTime[25];
+    sprintf(isoTime, "%04d-%02d-%02dT%02d:%02d:%02dZ", 
+            ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday, 
+            ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
+    
+    return String(isoTime);
+}
+
+void loop() {
+    if (!client.connected()) {
+        reconnect();
+    }
+    client.loop();
+
+    // Read button states
+    bool buttonState[4] = {
+        digitalRead(BUTTON1),
+        digitalRead(BUTTON2),
+        digitalRead(BUTTON3),
+        digitalRead(BUTTON4)
+    };
+
+    // Check if any button is pressed
+    for (int i = 0; i < 4; i++) {
+        if (buttonState[i] == LOW && lastButtonState[i] == HIGH) {
+            unsigned long currentTime = millis();
+            if (currentTime - lastPressTime > debounceDelay) {
+                lastPressTime = currentTime;
+                buttonPressed = true;
+
+                // Assign event based on button pressed
+                switch (i) {
+                    case 0: currentEvent = "DT1"; break;
+                    case 1: currentEvent = "DT2"; break;
+                    case 2: currentEvent = "DT3"; break;
+                    case 3: currentEvent = "DT4"; break;
+                }
+
+                Serial.print("Button ");
+                Serial.print(i + 1);
+                Serial.println(" Pressed! Sending data in 2 seconds...");
+            }
+        }
+    }
+
+    // If button was pressed, wait 2 seconds and send data
+    if (buttonPressed && millis() - lastPressTime >= sendDelay) {
+        buttonPressed = false;
+
+        Serial.println("Sending Data...");
+
+        // Create JSON payload
+        StaticJsonDocument<200> doc;
+        doc["eventType"] = "downtime";
+        doc["eventCode"] = currentEvent;
+        doc["machineId"] = "NBL_1";
+        doc["machineName"] = "NBL_1";
+        doc["lineId"] = "NBL_1";
+        doc["plantId"] = "2011";
+        doc["timestamp"] = getISO8601Time();
+        
+        char jsonBuffer[256];
+        serializeJson(doc, jsonBuffer);
+        
+        client.publish(mqtt_topic, jsonBuffer);
+        Serial.print("Sent Data (");
+        Serial.print(currentEvent);
+        Serial.print(") to Topic ");
+        Serial.println(mqtt_topic);
+
+        // Blink LED once (500ms)
+        digitalWrite(LED_PIN, HIGH);
+        delay(blinkTime);
+        digitalWrite(LED_PIN, LOW);
+    }
+
+    // Update button states
+    for (int i = 0; i < 4; i++) {
+        lastButtonState[i] = buttonState[i];
+    }
+}
