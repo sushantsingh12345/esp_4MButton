@@ -5,15 +5,15 @@
 #include <WiFiUdp.h>
 
 // WiFi Credentials
-const char* ssid = "Touchstone";
-const char* password = "secure@123";
+const char* ssid = "dlink";  // SSID of the open network
+//const char* password = "secure@123";
 
 // Static IP Configuration
-IPAddress local_IP(192, 1, 16, 150);
-IPAddress gateway(192, 1, 16, 100);
-IPAddress subnet(255, 255, 255, 0);
-IPAddress primaryDNS(4, 2, 2, 2);
-IPAddress secondaryDNS(8, 8, 8, 8);
+IPAddress local_IP(192, 1, 58, 87);      // Updated IP address
+IPAddress gateway(192, 1, 58, 254);      // Updated gateway
+IPAddress subnet(255, 255, 255, 0);      // Updated subnet
+IPAddress primaryDNS(8, 8, 8, 8);        // Updated primary DNS
+IPAddress secondaryDNS(4, 4, 4, 4);      // Updated secondary DNS
 
 // MQTT Broker
 const char* mqtt_server = "3.7.85.13";  
@@ -80,7 +80,7 @@ void setup() {
     }
 
     // Connect to WiFi
-    WiFi.begin(ssid, password);
+    WiFi.begin(ssid);
     Serial.print("Connecting to WiFi...");
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
